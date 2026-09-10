@@ -178,6 +178,8 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		}
 	}
 
+	info.ResponseText = responseTextBuilder.String()
+
 	if !containStreamUsage {
 		usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
 		usage.CompletionTokens += toolCount * 7
@@ -350,6 +352,8 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		}
 		responseBody = geminiRespStr
 	}
+
+	info.ResponseBody = responseBody
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 

@@ -153,6 +153,11 @@ type RelayInfo struct {
 	SubscriptionPlanTitle string
 	// RequestId is used for idempotent pre-consume/refund
 	RequestId string
+	// ResponseBody holds the final non-stream response bytes sent to the client;
+	// ResponseText holds the concatenated text of a streamed response.
+	// Only populated by handlers that support request body logging.
+	ResponseBody []byte
+	ResponseText string
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.
 	SubscriptionAmountTotal               int64
 	SubscriptionAmountUsedAfterPreConsume int64

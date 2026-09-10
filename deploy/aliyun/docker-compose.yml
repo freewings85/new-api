@@ -1,0 +1,67 @@
+# new-api 生产部署（阿里云 3 节点，前后端分离镜像）
+#
+# 每台 ECS 放一份本目录：docker-compose.yml + .env（从 .env.example 复制后填值）。
+# 三台机器的 .env 内容完全一致，只有 NODE_NAME 不同。
+# 每台机器跑两个容器：web（nginx，对外 80 端口）和 server（Go 后端，只在内部网络）。
+# ALB 后端指向各机器的 80 端口，健康检查路径 /api/status。
+# 数据库用 RDS PostgreSQL，缓存用云 Redis，本文件不包含这两个服务。
+#
+# 首次部署：
+#   docker compose pull && docker compose up -d
+#   curl -s localhost/api/status          # 看到 "success":true
+#
+# 升级（逐台）：
+#   1. ALB 后端服务器组里把本机权重设 0，等现有请求走完
+#   2. 改 .env 里的 SERVER_IMAGE / WEB_IMAGE 标签
+#   3. docker compose pull && docker compose up -d
+#   4. curl -s localhost/api/status 确认后把权重调回去
+#
+# 回滚：把镜像标签改回上一个，重复第 3、4 步。
+
+services:
+  server:
+    image: ${SERVER_IMAGE}
+    container_name: new-api-server
+    restart: always
+    env_file: .env
+    environment:
+      - NODE_NAME=${NODE_NAME}
+    expose:
+      - "3000"
+    # 优雅退出：必须大于 .env 里的 SHUTDOWN_TIMEOUT_SECONDS，否则流式请求会被强杀
+    stop_grace_period: 150s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    volumes:
+      # 该目录必须是每台机器本地目录，不能指向 NFS 等共享存储（文件名不含节点名，多节点写同一文件会损坏）。
+      - ./requests:/data/requests
+
+  web:
+    image: ${WEB_IMAGE}
+    container_name: new-api-web
+    restart: always
+    environment:
+      - SERVER_UPSTREAM=server:3000
+    ports:
+      - "80:80"
+    depends_on:
+      server:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"

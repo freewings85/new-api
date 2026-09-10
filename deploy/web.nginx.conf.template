@@ -1,0 +1,50 @@
+# 由 nginx 镜像在启动时用 envsubst 渲染，${SERVER_UPSTREAM} 来自环境变量。
+#
+# 路由规则：下面列出的后端路径前缀转发给 server 容器，其余全部当作前端页面。
+# 如果后台安装了带自定义路由的任务插件，把插件的路径前缀也加到 backend 的 location 里。
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    # Docker may assign a new IP when only the backend container is replaced.
+    # Keep the upstream in an nginx variable so requests use Docker DNS again.
+    resolver 127.0.0.11 valid=5s ipv6=off;
+    resolver_timeout 5s;
+    set $backend_upstream "${SERVER_UPSTREAM}";
+
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    # 请求体上限，要不小于后端的 MAX_REQUEST_BODY_MB
+    client_max_body_size 256m;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/javascript image/svg+xml;
+    gzip_min_length 1k;
+
+    # rsbuild 产出的带哈希静态资源（/static/js、/static/css、/static/font）长期缓存
+    location /static/ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # ---- 后端路径 ----
+    # /api 管理接口，/v1 /v1beta 中转接口，/mj /pg 中转接口，/dashboard/billing 兼容接口
+    location ~ ^/(api|v1|v1beta|mj|pg)(/|$) { include /etc/nginx/conf.d/proxy.inc; }
+    location ^~ /dashboard/billing/        { include /etc/nginx/conf.d/proxy.inc; }
+    # Midjourney 的 /fast/mj /relax/mj /turbo/mj 形式
+    location ~ ^/[^/]+/mj(/|$)             { include /etc/nginx/conf.d/proxy.inc; }
+
+    # ---- 其余全部是前端单页应用 ----
+    location / {
+        add_header Cache-Control "no-cache";
+        try_files $uri $uri/ /index.html;
+    }
+}

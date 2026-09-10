@@ -1,0 +1,71 @@
+# 本地运行自己构建的前后端分离镜像，复用已有的基础设施容器：
+#   - PostgreSQL: langfuse-postgres-1 (database "new_api")
+#   - Redis:      langfuse-redis-1    (db index 5)
+# 两者都在外部 docker 网络 "langfuse_default" 上。
+#
+# 步骤：
+#   1. 构建镜像（tag 任意，两个保持一致；VERSION 文件有值时自动用它）
+#        deploy/build-server-image.sh dev
+#        deploy/build-web-image.sh dev
+#   2. 启动并等待健康检查通过
+#        deploy/local-up.sh dev
+#   3. 访问 http://localhost:8080  （页面和接口都走 web 容器的 nginx）
+#   4. 改代码后重新构建镜像，再执行 local-up.sh 即可替换容器
+#   停止：docker compose -f docker-compose.local.yml down
+#
+# 调试模式：后端在 VS Code 里启动（监听宿主机 3000），只跑 web 容器并把它指向宿主机
+#   docker compose -f docker-compose.local.yml stop server
+#   SERVER_UPSTREAM=host.docker.internal:3000 docker compose -f docker-compose.local.yml up -d --no-deps web
+#   之后 http://localhost:8080 的页面由容器提供，接口打到 VS Code 里的进程，断点可用
+#   恢复：deploy/local-up.sh <tag>
+#
+# 用 8080 而不是 3000，是为了不和本地 go run（3000）、npm run dev（5173）冲突。
+
+services:
+  server:
+    image: new-api-server:${IMAGE_TAG:-dev}
+    container_name: new-api-server
+    restart: unless-stopped
+    environment:
+      - SQL_DSN=postgresql://postgres:postgres@langfuse-postgres-1:5432/new_api
+      - REDIS_CONN_STRING=redis://:myredissecret@langfuse-redis-1:6379/5
+      - TZ=Asia/Shanghai
+      - ERROR_LOG_ENABLED=true
+      - NODE_NAME=local-1
+      - SESSION_COOKIE_SECURE=false
+      - TRUSTED_PROXIES=172.16.0.0/12
+      - REQUEST_LOG_DIR=/data/requests
+    expose:
+      - "3000"
+    networks:
+      - langfuse_default
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    volumes:
+      # 该目录必须是每台机器本地目录，不能指向 NFS 等共享存储（文件名不含节点名，多节点写同一文件会损坏）。
+      - ./data/requests:/data/requests
+
+  web:
+    image: new-api-web:${IMAGE_TAG:-dev}
+    container_name: new-api-web
+    restart: unless-stopped
+    environment:
+      - SERVER_UPSTREAM=${SERVER_UPSTREAM:-server:3000}
+    # 让容器能用 host.docker.internal 访问宿主机（调试模式用）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8080:80"
+    depends_on:
+      server:
+        condition: service_healthy
+    networks:
+      - langfuse_default
+
+networks:
+  langfuse_default:
+    external: true

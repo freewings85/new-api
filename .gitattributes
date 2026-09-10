@@ -22,6 +22,10 @@
 # Shell scripts
 *.sh text eol=lf
 
+# Deployment files are consumed inside Linux containers; keep them LF on every platform
+deploy/** text eol=lf
+*.Dockerfile text eol=lf
+
 # Binary files
 *.png binary
 *.jpg binary

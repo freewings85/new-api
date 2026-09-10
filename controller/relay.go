@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/bodylog"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
@@ -418,6 +419,15 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		other.SetPublic("error_type", err.GetErrorType())
 		other.SetPublic("error_code", err.GetErrorCode())
 		other.SetPublic("status_code", err.StatusCode)
+		// body_file may only be written when a record is actually enqueued below.
+		// RecordRequestBodyLog skips a nil relayInfo and an unknown user, so an
+		// error raised before relay info exists (channel selection, auth) would
+		// otherwise leave the log pointing at a file nobody ever writes. Both use
+		// the same instant, so a request failing at midnight cannot name yesterday.
+		now := time.Now()
+		if service.RequestBodyLogEnabled() && relayInfo != nil && relayInfo.UserId != 0 {
+			other.SetAdmin("body_file", service.RequestBodyLogFile(relayInfo.UserId, now))
+		}
 		service.AppendRelayLogAdminInfo(c, relayInfo, other)
 		service.AppendTaskPluginContextAuditInfo(c, other)
 		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
@@ -426,6 +436,11 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		}
 		useTimeSeconds := int(time.Since(startTime).Seconds())
 		model.RecordErrorLog(c, userId, channelError.ChannelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
+		service.RecordRequestBodyLog(c, relayInfo, service.RequestBodyLogParams{
+			Status: bodylog.StatusError,
+			Error:  err.MaskSensitiveErrorWithStatusCode(),
+			At:     now,
+		})
 	}
 
 }

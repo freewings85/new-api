@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/bodylog"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -532,6 +533,13 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	attachQuotaSaturation(ctx, relayInfo, other)
 
+	// One instant for both the recorded file name and the record itself, so a
+	// request settled right at midnight cannot point at yesterday's file.
+	now := time.Now()
+	if RequestBodyLogEnabled() {
+		other.SetAdmin("body_file", RequestBodyLogFile(relayInfo.UserId, now))
+	}
+
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     summary.PromptTokens,
@@ -545,6 +553,12 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		IsStream:         relayInfo.IsStream,
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
+	})
+	RecordRequestBodyLog(ctx, relayInfo, RequestBodyLogParams{
+		Status:           bodylog.StatusOK,
+		PromptTokens:     summary.PromptTokens,
+		CompletionTokens: summary.CompletionTokens,
+		At:               now,
 	})
 	gopool.Go(func() {
 		perfmetrics.RecordRelaySample(relayInfo, true, int64(summary.CompletionTokens))
